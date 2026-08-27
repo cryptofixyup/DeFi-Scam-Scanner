@@ -2,9 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .db import User, get_session
+from .db import Plan, Subscription, User, get_session
 from .entitlements import reserve_daily_scan, usage_today
 from .security import current_user
 
@@ -18,21 +19,27 @@ class ScanRequest(BaseModel):
     address: str = Field(min_length=42, max_length=64)
 
 
+async def active_plan(session: AsyncSession, user_id):
+    row = await session.execute(
+        select(Plan)
+        .join(Subscription, Subscription.plan_id == Plan.id)
+        .where(Subscription.user_id == user_id, Subscription.status == "active", Plan.active.is_(True))
+        .order_by(Subscription.period_end.desc())
+    )
+    return row.scalars().first()
+
+
 @router.get("/me/usage")
 async def usage(user: UserDep, session: SessionDep):
-    plan = await reserve_daily_scan(session, user.id)
-    # Reservation above is intentionally not used by the read endpoint.
-    # This endpoint must not consume a scan; rollback the reservation.
-    await session.rollback()
-    count = await usage_today(session, user.id)
-    return {"plan": plan.id, "daily_used": count, "daily_limit": plan.daily_scan_limit}
+    plan = await active_plan(session, user.id)
+    if not plan:
+        return {"plan": None, "daily_used": 0, "daily_limit": 0}
+    return {"plan": plan.id, "daily_used": await usage_today(session, user.id), "daily_limit": plan.daily_scan_limit}
 
 
 @router.post("/scan/wallet")
 async def scan_wallet(payload: ScanRequest, user: UserDep, session: SessionDep):
     plan = await reserve_daily_scan(session, user.id)
-    # Real scanner integration is intentionally isolated behind this contract.
-    # No risk score is fabricated when blockchain intelligence is unavailable.
     return {
         "status": "ready",
         "chain": payload.chain,

@@ -1,0 +1,75 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: Android artifact to build
+        required: true
+        default: appbundle
+        type: choice
+        options:
+          - appbundle
+          - apk
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_CHANNEL: stable
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Validate Flutter project
+        run: |
+          test -f pubspec.yaml
+          test -d lib
+
+      - name: Generate Android platform files when absent
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --project-name=crypto_safety_scanner .
+          fi
+          test -f android/app/build.gradle || test -f android/app/build.gradle.kts
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release artifact
+        run: |
+          if [ "${{ inputs.build_type }}" = "apk" ]; then
+            flutter build apk --release
+          else
+            flutter build appbundle --release
+          fi
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-safety-scanner-${{ inputs.build_type }}
+          path: |
+            mobile/build/app/outputs/flutter-apk/*.apk
+            mobile/build/app/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14

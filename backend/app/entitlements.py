@@ -1,26 +1,36 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import Plan, Subscription, UsageCounter
 
 
-async def reserve_daily_scan(session: AsyncSession, user_id: UUID) -> Plan:
+async def active_plan(session: AsyncSession, user_id: UUID) -> Plan:
+    now = datetime.now(timezone.utc)
     row = await session.execute(
-        select(Subscription, Plan)
-        .join(Plan, Subscription.plan_id == Plan.id)
-        .where(Subscription.user_id == user_id, Subscription.status == "active", Plan.active.is_(True))
+        select(Plan)
+        .join(Subscription, Subscription.plan_id == Plan.id)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status == "active",
+            Subscription.period_start <= now,
+            Subscription.period_end > now,
+            Plan.active.is_(True),
+        )
         .order_by(Subscription.period_end.desc())
     )
-    result = row.first()
-    if not result:
+    plan = row.scalars().first()
+    if plan is None:
         raise HTTPException(status_code=403, detail="No active plan")
-    subscription, plan = result
+    return plan
 
+
+async def reserve_daily_scan(session: AsyncSession, user_id: UUID) -> Plan:
+    plan = await active_plan(session, user_id)
     today = date.today()
     stmt = insert(UsageCounter).values(user_id=user_id, usage_date=today, scan_count=1)
     stmt = stmt.on_conflict_do_update(
@@ -38,5 +48,23 @@ async def reserve_daily_scan(session: AsyncSession, user_id: UUID) -> Plan:
 
 
 async def usage_today(session: AsyncSession, user_id: UUID) -> int:
-    row = await session.scalar(select(UsageCounter.scan_count).where(UsageCounter.user_id == user_id, UsageCounter.usage_date == date.today()))
-    return row or 0
+    value = await session.scalar(
+        select(UsageCounter.scan_count).where(
+            UsageCounter.user_id == user_id,
+            UsageCounter.usage_date == date.today(),
+        )
+    )
+    return int(value or 0)
+
+
+async def usage_month(session: AsyncSession, user_id: UUID) -> int:
+    from sqlalchemy import extract
+
+    value = await session.scalar(
+        select(func.coalesce(func.sum(UsageCounter.scan_count), 0)).where(
+            UsageCounter.user_id == user_id,
+            extract("year", UsageCounter.usage_date) == date.today().year,
+            extract("month", UsageCounter.usage_date) == date.today().month,
+        )
+    )
+    return int(value or 0)

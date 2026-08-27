@@ -1,12 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .api import router as api_router
 from .config import settings
 from .db import Plan, Subscription, User, get_session
 from .security import create_access_token, current_user, hash_password, verify_password
@@ -17,6 +18,7 @@ if settings.cors_list:
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 UserDep = Annotated[User, Depends(current_user)]
+app.include_router(api_router)
 
 
 class RegisterRequest(BaseModel):
@@ -52,7 +54,7 @@ async def register(payload: RegisterRequest, session: Session):
     if not plan:
         raise HTTPException(status_code=503, detail="Plans unavailable")
     now = datetime.now(timezone.utc)
-    session.add(Subscription(user_id=user.id, plan_id="free", status="active", period_start=now, period_end=now.replace(year=now.year + 1)))
+    session.add(Subscription(user_id=user.id, plan_id="free", status="active", period_start=now, period_end=now + timedelta(days=365)))
     await session.commit()
     return {"user": {"id": str(user.id), "email": user.email}, "plan": "free", "access_token": create_access_token(user.id), "token_type": "bearer"}
 

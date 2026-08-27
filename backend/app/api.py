@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import ScamWallet, Scan, User, get_session
-from .entitlements import active_plan, reserve_daily_scan, usage_month, usage_today
+from .entitlements import active_plan, release_scan, reserve_daily_scan, usage_month, usage_today
 from .evm import EVMRPC, InvalidEVMAddress, normalize_evm_address
 from .risk import score_observation
 from .security import current_user
@@ -26,13 +26,7 @@ class ScanRequest(BaseModel):
 @router.get("/me/usage")
 async def usage(user: UserDep, session: SessionDep):
     plan = await active_plan(session, user.id)
-    return {
-        "plan": plan.id,
-        "daily_used": await usage_today(session, user.id),
-        "daily_limit": plan.daily_scan_limit,
-        "monthly_used": await usage_month(session, user.id),
-        "monthly_limit": plan.monthly_scan_limit,
-    }
+    return {"plan": plan.id, "daily_used": await usage_today(session, user.id), "daily_limit": plan.daily_scan_limit, "monthly_used": await usage_month(session, user.id), "monthly_limit": plan.monthly_scan_limit}
 
 
 @router.post("/scan/wallet")
@@ -47,10 +41,11 @@ async def scan_wallet(payload: ScanRequest, user: UserDep, session: SessionDep):
         raise HTTPException(status_code=503, detail="Blockchain provider unavailable")
 
     plan = await reserve_daily_scan(session, user.id)
-    scam = await session.scalar(select(ScamWallet).where(ScamWallet.chain == payload.chain, ScamWallet.address == address))
     try:
+        scam = await session.scalar(select(ScamWallet).where(ScamWallet.chain == payload.chain, ScamWallet.address == address))
         observation = await EVMRPC(settings.ethereum_rpc_url).observe(payload.chain, address)
     except Exception:
+        await release_scan(session, user.id)
         raise HTTPException(status_code=503, detail="Blockchain data temporarily unavailable") from None
 
     result = score_observation(observation, None if scam is None else {"severity": scam.severity, "category": scam.category, "source": scam.source})

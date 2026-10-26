@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
-import '../models/scan_result.dart';
 import '../services/api_client.dart';
 import 'result_screen.dart';
 

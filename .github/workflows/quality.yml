@@ -58,6 +58,9 @@ jobs:
       - name: Dependencies
         run: flutter pub get
 
+      - name: Generate localizations
+        run: flutter gen-l10n
+
       - name: Static analysis
         run: flutter analyze
 

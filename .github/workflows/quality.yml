@@ -34,7 +34,7 @@ jobs:
         run: python -m compileall -q app
 
       - name: Unit tests
-        run: pytest -q
+        run: python -m pytest -q
 
       - name: Dependency audit
         run: pip-audit -r requirements.txt
@@ -57,6 +57,9 @@ jobs:
 
       - name: Dependencies
         run: flutter pub get
+
+      - name: Generate localizations
+        run: flutter gen-l10n
 
       - name: Static analysis
         run: flutter analyze
